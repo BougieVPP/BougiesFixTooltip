@@ -13,8 +13,6 @@ In localized clients (such as French) or custom servers, a missing space or malf
 * **Automatic Singular/Plural Resolution:** Handles integers (`1`, `7`) as well as decimals (`0.5`, `1,5`).
 * **Full Tooltip Coverage:** Works on main tooltips (`GameTooltip`), chat item links (`ItemRefTooltip`), and comparison tooltips (`ShoppingTooltip`).
 * **ElvUI & Default UI Compatible:** Works seamlessly with Blizzard's default interface as well as ElvUI and other tooltip addons.
-* **Zero Lua Errors (Midnight / 12.x Ready):** Built-in protection against Blizzard's protected `Secret Values` and forbidden frames (`IsForbidden`).
-* **Ultra-Lightweight:** Less than 60 lines of code, zero configuration required, and negligible CPU/memory footprint.
 
 ### Before / After
 TODO
@@ -37,8 +35,6 @@ Sur les clients traduits (notamment en français) ou certains serveurs personnal
 * **Gestion automatique du singulier et du pluriel :** Prend en charge les nombres entiers (`1`, `7`) ainsi que les nombres décimaux (`0,5`, `1.5`).
 * **Couverture complète :** Fonctionne sur l'infobulle principale, les liens d'objets dans le chat et les infobulles de comparaison (`Maj`).
 * **Compatible ElvUI et interface de base :** Fonctionne aussi bien sans addon qu'avec ElvUI ou d'autres skins d'infobulles.
-* **Zéro erreur Lua (Compatible 12.x / Midnight) :** Protégé contre les valeurs secrètes (`Secret Values`) et les cadres protégés de Blizzard.
-* **Ultra-léger :** Moins de 60 lignes de code, aucune configuration requise et impact nul sur les performances.
 
 ### Avant / Après
 TODO
