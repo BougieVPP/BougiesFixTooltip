@@ -1,6 +1,6 @@
 # BougiesFixToolTip
 
-![BougiesFixToolTip Logo](logo.png)
+![BougiesFixToolTip Logo](BougiesFixToolTip.png)
 
 ## 🇬🇧 English
 
