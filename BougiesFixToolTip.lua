@@ -1,3 +1,5 @@
+local isFrench = (GetLocale and GetLocale() == "frFR")
+
 local function IsSecret(val)
     if issecretvalue and issecretvalue(val) then
         return true
@@ -8,21 +10,49 @@ local function IsSecret(val)
     return false
 end
 
+local function ResolvePlural(prefix, numStr, midCodes, sing, plur)
+    -- Supprime espaces normaux, espaces insécables UTF-8 et convertit la virgule en point
+    local cleanNum = numStr:gsub("[%s\194\160]", ""):gsub(",", ".")
+    local numeric = tonumber(cleanNum)
+    local isSingular
+
+    if numeric then
+        isSingular = isFrench and (numeric < 2) or (numeric == 1)
+    else
+        isSingular = false
+    end
+
+    return prefix .. numStr .. midCodes .. (isSingular and sing or plur)
+end
+
 local function CleanText(text)
     if type(text) ~= "string" or IsSecret(text) then
         return text
     end
     if text:find("%$[lL]") then
-        -- Cas 1 : précédé d'un entier ou décimal (ex: "7 $lpoint:points;" ou "0,5 $lseconde:secondes;"))
-        text = text:gsub("([%d%,%.]+)%s*%$[lL]([^:;]+):([^;]+);", function(num, sing, plur)
-            local numeric = tonumber((numStr:gsub(",", ".")))
-            local word = (numeric and numeric <= 1) and sing or plur
-            return numStr .. " " .. word
-        end)
-        -- Cas 2 : balise isolée restante (sécurité)
+        -- Cas 1 : précédé d'un nombre (gère décimales, espaces insécables et codes couleur |r / |cXXXXXXXX)
+        text = text:gsub("(%f[%d%.%,])([%d%,%.]+)([%s\194\160|cCrR%x]*)%$[lL]([^:;]+):([^;]+);", ResolvePlural)
+        -- Cas 2 : balise isolée sans chiffre devant (sécurité)
         text = text:gsub("%$[lL]([^:;]+):([^;]+);", "%2")
     end
     return text
+end
+
+local function ProcessRegions(...)
+    for i = 1, select("#", ...) do
+        local region = select(i, ...)
+        if region and not (region.IsForbidden and region:IsForbidden()) then
+            if region.GetObjectType and region:GetObjectType() == "FontString" then
+                local ok, text = pcall(region.GetText, region)
+                if ok and text and not IsSecret(text) and text:find("%$[lL]") then
+                    local cleaned = CleanText(text)
+                    if cleaned ~= text then
+                        pcall(region.SetText, region, cleaned)
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function ScanTooltip(tooltip)
@@ -30,16 +60,14 @@ local function ScanTooltip(tooltip)
     if tooltip.IsShown and not tooltip:IsShown() then return end
     if not tooltip.GetRegions then return end
 
-    for _, region in ipairs({ tooltip:GetRegions() }) do
-        if region and not (region.IsForbidden and region:IsForbidden()) and region:GetObjectType() == "FontString" then
-            local text = region:GetText()
-            if text and not IsSecret(text) and text:find("%$[lL]") then
-                local cleaned = CleanText(text)
-                if cleaned ~= text then
-                    pcall(region.SetText, region, cleaned)
-                end
-            end
-        end
+    ProcessRegions(tooltip:GetRegions())
+end
+
+local function HookTooltip(tt)
+    if tt and not hooked[tt] and tt.HookScript then
+        hooked[tt] = true
+        tt:HookScript("OnShow", ScanTooltip)
+        tt:HookScript("OnUpdate", ScanTooltip)
     end
 end
 
@@ -55,8 +83,12 @@ local tooltips = {
 }
 
 for _, tt in ipairs(tooltips) do
-    if tt and tt.HookScript then
-        tt:HookScript("OnShow", ScanTooltip)
-        tt:HookScript("OnUpdate", ScanTooltip)
-    end
+    HookTooltip(tt)
+end
+
+-- Capture également toute future infobulle initialisée dynamiquement par le jeu
+if type(SharedTooltip_SetBackdropStyle) == "function" then
+    hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tt)
+        HookTooltip(tt)
+    end)
 end
