@@ -1,0 +1,7 @@
+package-as: BougiesFixToolTip
+
+ignore:
+  - README.md
+  - comparison.png
+  - logo.png
+  - .github
