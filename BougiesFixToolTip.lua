@@ -1,154 +1,96 @@
-local isFrench = (GetLocale and GetLocale() == "frFR")
+local locale = GetLocale and GetLocale() or "enUS"
+local isFrench = locale == "frFR"
+local isEnglish = locale == "enUS" or locale == "enGB"
+local UPDATE_INTERVAL = 0.10
 
-local function IsSecret(val)
-    if issecretvalue and issecretvalue(val) then return true end
-    if canaccessvalue and not canaccessvalue(val) then return true end
+local function IsSecret(value)
+    if issecretvalue and issecretvalue(value) then return true end
+    if canaccessvalue and not canaccessvalue(value) then return true end
     return false
 end
 
-local function ResolvePlural(numStr, midCodes, sing, plur)
-    local cleanNum = numStr:gsub("[%s\194\160]", ""):gsub(",", ".")
-    local numeric = tonumber(cleanNum)
-    local isSingular = false
+local function HasPluralTag(text)
+    return text:find("%$[lL]") ~= nil
+end
 
-    if numeric then
-        isSingular = isFrench and (numeric < 2) or (numeric == 1)
+-- Validate grouping instead of silently removing arbitrary separators.
+local function ParseInteger(value, group)
+    if value:match("^%d+$") then return value end
+    if not group then return nil end
+
+    local first = value:find(group, 1, true)
+    if not first then return nil end
+    local head = value:sub(1, first - 1)
+    if not head:match("^%d%d?%d?$") then return nil end
+
+    local parts = { head }
+    local start = first + 1
+    while true do
+        local nextGroup = value:find(group, start, true)
+        local part = value:sub(start, nextGroup and nextGroup - 1 or -1)
+        if not part:match("^%d%d%d$") then return nil end
+        parts[#parts + 1] = part
+        if not nextGroup then break end
+        start = nextGroup + 1
+    end
+    return table.concat(parts)
+end
+
+local function ParseLocalizedNumber(token)
+    -- The sign does not change the singular/plural decision.
+    token = token:gsub("^[+-]", "")
+    local decimal, group
+    if isFrench then
+        -- Accept a dot as an alternative decimal separator (custom servers).
+        decimal = token:find(",", 1, true) and "," or "."
+        group = " "
+    elseif isEnglish then
+        decimal = "."
+        group = token:find(",", 1, true) and "," or " "
+    else
+        -- Conservative fallback for other locales; no full grammar support.
+        if token:find(",", 1, true) and token:find(".", 1, true) then
+            return nil
+        end
+        decimal = token:find(",", 1, true) and "," or "."
+        group = " "
     end
 
-    return numStr .. midCodes .. (isSingular and sing or plur)
+    local integer, fraction = token, nil
+    local at = token:find(decimal, 1, true)
+    if at then
+        integer = token:sub(1, at - 1)
+        fraction = token:sub(at + 1)
+        if not fraction:match("^%d+$") then return nil end
+    end
+
+    local digits = ParseInteger(integer, group)
+    if not digits then return nil end
+    local numeric = tonumber(fraction and (digits .. "." .. fraction) or digits)
+    if not numeric or numeric == math.huge then return nil end
+    return numeric
+end
+
+-- Examine only the text before a tag. Keep all original formatting in output.
+local function NumberBeforeTag(prefix)
+    prefix = prefix:gsub("|[cC]%x%x%x%x%x%x%x%x", "")
+                   :gsub("|[rR]", "")
+                   :gsub("\194\160", " ") -- U+00A0
+                   :gsub("\226\128\175", " ") -- U+202F
+                   :gsub("[ \t]+$", "")
+    prefix = prefix:gsub("%%[ \t]*$", ""):gsub("[ \t]+$", "")
+
+    local start, _, token = prefix:find("([+-]?%d[%d., ]*)$")
+    if not token then return nil end
+    -- Do not interpret a suffix of another malformed number or identifier.
+    local before = prefix:sub(start - 1, start - 1)
+    if start > 1 and before:match("[%w_.,+-]") then return nil end
+    return ParseLocalizedNumber(token)
 end
 
 local function CleanText(text)
-    if type(text) ~= "string" or IsSecret(text) then return text end
-    if text:find("%$[lL]") then
-        text = text:gsub("([%d%,%.]+)([%s\194\160|cCrR%x]*)%$[lL]([^:;]+):([^;]+);", ResolvePlural)
-        text = text:gsub("%$[lL]([^:;]+):([^;]+);", "%2")
-    end
-    return text
-end
-
-local function ScanTooltip(tooltip)
-    if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
-    if not tooltip.GetRegions then return end
-
-    for i = 1, select("#", tooltip:GetRegions()) do
-        local region = select(i, tooltip:GetRegions())
-        if region and not (region.IsForbidden and region:IsForbidden()) then
-            if region.GetObjectType and region:GetObjectType() == "FontString" then
-                local text = region:GetText()
-                if text and not IsSecret(text) and text:find("%$[lL]") then
-                    local cleaned = CleanText(text)
-                    if cleaned ~= text then
-                        region:SetText(cleaned)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local hooked = setmetatable({}, { __mode = "k" })
-
-local function HookTooltip(tt)
-    if tt and not hooked[tt] and tt.HookScript then
-        hooked[tt] = true
-        tt:HookScript("OnShow", ScanTooltip)
-        tt:HookScript("OnUpdate", ScanTooltip)
-    end
-end
-
-local tooltips = {
-    GameTooltip,
-    ItemRefTooltip,
-    ItemRefShoppingTooltip1,
-    ItemRefShoppingTooltip2,
-    ShoppingTooltip1,
-    ShoppingTooltip2,
-    EmbeddedItemTooltip
-}
-
-for _, tt in ipairs(tooltips) do
-    HookTooltip(tt)
-end
-
-if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, ScanTooltip)
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, ScanTooltip)
-end
-local isFrench = (GetLocale and GetLocale() == "frFR")
-
-local function IsSecret(val)
-    if issecretvalue and issecretvalue(val) then return true end
-    if canaccessvalue and not canaccessvalue(val) then return true end
-    return false
-end
-
-local function ResolvePlural(numStr, midCodes, sing, plur)
-    local cleanNum = numStr:gsub("[%s\194\160]", ""):gsub(",", ".")
-    local numeric = tonumber(cleanNum)
-    local isSingular = false
-
-    if numeric then
-        isSingular = isFrench and (numeric < 2) or (numeric == 1)
+    if IsSecret(text) or type(text) ~= "string" or not HasPluralTag(text) then
+        return text
     end
 
-    return numStr .. midCodes .. (isSingular and sing or plur)
-end
-
-local function CleanText(text)
-    if type(text) ~= "string" or IsSecret(text) then return text end
-    if text:find("%$[lL]") then
-        text = text:gsub("([%d%,%.]+)([%s\194\160|cCrR%x]*)%$[lL]([^:;]+):([^;]+);", ResolvePlural)
-        text = text:gsub("%$[lL]([^:;]+):([^;]+);", "%2")
-    end
-    return text
-end
-
-local function ScanTooltip(tooltip)
-    if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
-    if not tooltip.GetRegions then return end
-
-    for i = 1, select("#", tooltip:GetRegions()) do
-        local region = select(i, tooltip:GetRegions())
-        if region and not (region.IsForbidden and region:IsForbidden()) then
-            if region.GetObjectType and region:GetObjectType() == "FontString" then
-                local text = region:GetText()
-                if text and not IsSecret(text) and text:find("%$[lL]") then
-                    local cleaned = CleanText(text)
-                    if cleaned ~= text then
-                        region:SetText(cleaned)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local hooked = setmetatable({}, { __mode = "k" })
-
-local function HookTooltip(tt)
-    if tt and not hooked[tt] and tt.HookScript then
-        hooked[tt] = true
-        tt:HookScript("OnShow", ScanTooltip)
-        tt:HookScript("OnUpdate", ScanTooltip)
-    end
-end
-
-local tooltips = {
-    GameTooltip,
-    ItemRefTooltip,
-    ItemRefShoppingTooltip1,
-    ItemRefShoppingTooltip2,
-    ShoppingTooltip1,
-    ShoppingTooltip2,
-    EmbeddedItemTooltip
-}
-
-for _, tt in ipairs(tooltips) do
-    HookTooltip(tt)
-end
-
-if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, ScanTooltip)
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, ScanTooltip)
-end
+    return (text:gsub("()%$[lL]([^:;$\r\n]+):([^:;$\r\n]+);", function(position, singular, plural)
