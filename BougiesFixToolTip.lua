@@ -94,3 +94,100 @@ local function CleanText(text)
     end
 
     return (text:gsub("()%$[lL]([^:;$\r\n]+):([^:;$\r\n]+);", function(position, singular, plural)
+        local number = NumberBeforeTag(text:sub(1, position - 1))
+        -- Preserve the original French rule and the plural fallback.
+        local useSingular = number ~= nil and ((isFrench and number < 2) or number == 1)
+        return useSingular and singular or plural
+    end))
+end
+
+local function IsForbidden(object)
+    return not object or (object.IsForbidden and object:IsForbidden())
+end
+
+local function ScanRegions(...)
+    for i = 1, select("#", ...) do
+        local region = select(i, ...)
+        if not IsForbidden(region) and region.GetObjectType
+            and region:GetObjectType() == "FontString" then
+            local text = region:GetText()
+            if not IsSecret(text) and type(text) == "string" and HasPluralTag(text) then
+                local cleaned = CleanText(text)
+                if cleaned ~= text then
+                    region:SetText(cleaned)
+                end
+            end
+        end
+    end
+end
+
+local function ScanTooltip(tooltip)
+    if IsForbidden(tooltip) or not tooltip.GetRegions then return end
+    -- One API call per scan; no temporary table for the returned regions.
+    ScanRegions(tooltip:GetRegions())
+end
+
+local hooked = setmetatable({}, { __mode = "k" })
+local elapsedByTooltip = setmetatable({}, { __mode = "k" })
+
+local function OnShow(tooltip)
+    elapsedByTooltip[tooltip] = 0
+    ScanTooltip(tooltip)
+end
+
+local function OnUpdate(tooltip, elapsed)
+    local total = (elapsedByTooltip[tooltip] or 0) + elapsed
+    if total >= UPDATE_INTERVAL then
+        elapsedByTooltip[tooltip] = 0
+        ScanTooltip(tooltip)
+    else
+        elapsedByTooltip[tooltip] = total
+    end
+end
+
+local function HookTooltip(tooltip)
+    if IsForbidden(tooltip) or hooked[tooltip] or not tooltip.HookScript then return end
+    hooked[tooltip] = true
+    if not tooltip.HasScript or tooltip:HasScript("OnShow") then
+        tooltip:HookScript("OnShow", OnShow)
+    end
+    if not tooltip.HasScript or tooltip:HasScript("OnUpdate") then
+        tooltip:HookScript("OnUpdate", OnUpdate)
+    end
+end
+
+local tooltipNames = {
+    "GameTooltip",
+    "ItemRefTooltip",
+    "ItemRefShoppingTooltip1",
+    "ItemRefShoppingTooltip2",
+    "ShoppingTooltip1",
+    "ShoppingTooltip2",
+    "EmbeddedItemTooltip",
+}
+
+local registeredTypes = {}
+local function RegisterTooltips()
+    -- Names avoid nil holes in ipairs and support late-loaded Blizzard UI.
+    for _, name in ipairs(tooltipNames) do
+        HookTooltip(_G[name])
+    end
+
+    local processor = TooltipDataProcessor
+    local dataTypes = Enum and Enum.TooltipDataType
+    if not processor or not processor.AddTooltipPostCall or not dataTypes then return end
+    for _, name in ipairs({ "Item", "Spell" }) do
+        local dataType = dataTypes[name]
+        if dataType ~= nil and not registeredTypes[dataType] then
+            processor.AddTooltipPostCall(dataType, ScanTooltip)
+            registeredTypes[dataType] = true
+        end
+    end
+end
+
+RegisterTooltips()
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:SetScript("OnEvent", RegisterTooltips)
